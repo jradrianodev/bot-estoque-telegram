@@ -6,9 +6,10 @@ import datetime
 from flask import Flask, request, jsonify
 
 # --- CONFIGURAÇÃO ---
-BOT_TOKEN = "8429737414:AAEu2MZwc7AaNj7XScU9tRX_HyiIP5f-9Zw"
-SHEET_ID = "13Nr2zfXBhRxFpsC5zfhHGAkrdrISxvApjX9KgUwvAsk"
-GEMINI_API_KEY = "AIzaSyAutlE8Zg4b2oIqbe5wYd1TwNfqLa-uEgI"
+# (Vamos buscar do Render, mas pode deixar os valores antigos aqui por segurança)
+BOT_TOKEN = os.environ.get('BOT_TOKEN', "8429737414:AAEu2MZwc7AaNj7XScU9tRX_HyiIP5f-9Zw")
+SHEET_ID = os.environ.get('SHEET_ID', "13Nr2zfXBhRxFpsC5zfhHGAkrdrISxvApjX9KgUwvAsk")
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', "AIzaSyAutlE8Zg4b2oIqbe5wYd1TwNfqLa-uEgI")
 # --- FIM DA CONFIGURAÇÃO ---
 
 # Inicializa o Flask (nosso servidor)
@@ -29,7 +30,7 @@ except Exception as e:
 processed_ids = set()
 
 # ===============================================================
-# 1. HELPER: CHAMADA DA IA (GEMINI)
+# HELPER: CHAMADA DA IA (GEMINI)
 # ===============================================================
 def get_ia_data(texto, produtos_lista):
     print(f"Chamando IA para: {texto}")
@@ -76,10 +77,9 @@ def get_ia_data(texto, produtos_lista):
     return lista_de_itens
 
 # ===============================================================
-# 2. HELPER: BUSCAR DADOS (LOOKUP)
+# HELPER: BUSCAR DADOS (LOOKUP)
 # ===============================================================
 def get_lookup_map():
-    # Isso é rápido, então não precisamos de cache complexo
     print("Buscando lista de produtos na planilha...")
     produtos_data = aba_produtos.get_all_values()[1:] # Pula o cabeçalho
     produtos_map = {}
@@ -94,7 +94,7 @@ def get_lookup_map():
     return produtos_map
 
 # ===============================================================
-# 3. HELPER: ENVIAR MENSAGEM TELEGRAM
+# HELPER: ENVIAR MENSAGEM TELEGRAM
 # ===============================================================
 def send_telegram_message(chat_id, text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -106,7 +106,7 @@ def send_telegram_message(chat_id, text):
         print(f"Erro ao enviar mensagem: {e}")
 
 # ===============================================================
-# 4. O WEBHOOK (O NOVO "PORTEIRO")
+# O WEBHOOK (O NOVO "PORTEIRO")
 # ===============================================================
 @app.route('/webhook', methods=['POST'])
 def telegram_webhook():
@@ -117,14 +117,13 @@ def telegram_webhook():
         message = update.get('message')
         
         if not message or not message.get('text') or not update_id:
-            return jsonify(status="ok") # Ignora updates que não são mensagens
+            return jsonify(status="ok") # Ignora
 
         # --- PREVENÇÃO DE DUPLICIDADE ---
         if update_id in processed_ids:
             print(f"Ignorando ID duplicado: {update_id}")
             return jsonify(status="ok")
         
-        # Adiciona ao cache de memória
         if len(processed_ids) > 1000: # Limpa o cache
             processed_ids.clear()
         processed_ids.add(update_id)
@@ -172,22 +171,20 @@ def telegram_webhook():
 
     except Exception as e:
         print(f"Erro no processamento: {e}")
-        # Tenta avisar o usuário do erro
         try:
             chat_id = update['message']['chat']['id']
             send_telegram_message(chat_id, f"❌ Ocorreu um erro no processamento:\n{e}")
         except:
-            pass # Falha silenciosamente se não conseguir nem pegar o chat_id
+            pass 
 
     # Responde OK ao Telegram
     return jsonify(status="ok")
 
 # ===============================================================
-# 5. ROTA DE "HEALTH CHECK" (para o Render)
+# ROTA DE "HEALTH CHECK" (para o Render)
 # ===============================================================
 @app.route('/')
 def health_check():
     return "Bot está vivo!", 200
 
-# O Gunicorn (do Render) vai rodar isso
-# Não precisamos do app.run()
+# O Gunicorn (do Render) vai rodar isso, não precisamos do app.run()
