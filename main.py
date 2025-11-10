@@ -146,7 +146,7 @@ def telegram_webhook():
         # 3. Prepara linhas para a planilha
         linhas_para_adicionar = []
         respostas_telegram = []
-        data_atual = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+        data_atual = datetime.datetime.now().strftime("%d/%m/%Y")
         
         for item in lista_de_itens:
             lookup = produtos_map.get(item['descricao'], {})
