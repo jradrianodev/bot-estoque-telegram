@@ -3,6 +3,7 @@ import json
 import gspread
 import requests
 import datetime
+import traceback
 from flask import Flask, request, jsonify
 
 # --- CONFIGURAÇÃO ---
@@ -24,7 +25,10 @@ try:
     aba_produtos = spreadsheet.worksheet("Produtos")
     print("Conectado ao Google Sheets com sucesso.")
 except Exception as e:
-    print(f"Erro ao conectar ao Google Sheets: {e}")
+    # ESTA É A MUDANÇA - VAI MOSTRAR O ERRO COMPLETO
+    print("--- ERRO REAL DE CONEXÃO ---")
+    print(traceback.format_exc())
+    print("--- FIM DO ERRO ---")
 
 # Cache simples em memória para evitar duplicatas
 processed_ids = set()
