@@ -7,17 +7,15 @@ import traceback
 from flask import Flask, request, jsonify
 
 # --- CONFIGURAÇÃO ---
-# (Vamos buscar do Render, mas pode deixar os valores antigos aqui por segurança)
 BOT_TOKEN = os.environ.get('BOT_TOKEN', "8429737414:AAEu2MZwc7AaNj7XScU9tRX_HyiIP5f-9Zw")
 SHEET_ID = os.environ.get('SHEET_ID', "13Nr2zfXBhRxFpsC5zfhHGAkrdrISxvApjX9KgUwvAsk")
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', "AIzaSyAutlE8Zg4b2oIqbe5wYd1TwNfqLa-uEgI")
 # --- FIM DA CONFIGURAÇÃO ---
 
-# Inicializa o Flask (nosso servidor)
+# Inicializa o Flask
 app = Flask(__name__)
 
 # Conecta ao Google Sheets
-# O Render vai criar o arquivo 'credentials.json' para nós
 try:
     gc = gspread.service_account(filename='credentials.json')
     spreadsheet = gc.open_by_key(SHEET_ID)
@@ -25,12 +23,11 @@ try:
     aba_produtos = spreadsheet.worksheet("Produtos")
     print("Conectado ao Google Sheets com sucesso.")
 except Exception as e:
-    # ESTA É A MUDANÇA - VAI MOSTRAR O ERRO COMPLETO
     print("--- ERRO REAL DE CONEXÃO ---")
     print(traceback.format_exc())
     print("--- FIM DO ERRO ---")
 
-# Cache simples em memória para evitar duplicatas
+# Cache simples em memória
 processed_ids = set()
 
 # ===============================================================
@@ -85,15 +82,15 @@ def get_ia_data(texto, produtos_lista):
 # ===============================================================
 def get_lookup_map():
     print("Buscando lista de produtos na planilha...")
-    produtos_data = aba_produtos.get_all_values()[1:] # Pula o cabeçalho
+    produtos_data = aba_produtos.get_all_values()[1:]
     produtos_map = {}
     for row in produtos_data:
-        if row[0]: # Coluna A (PRODUTO)
+        if row[0]:
             produtos_map[row[0]] = {
-                "material": row[1] or "",  # B - CÓDIGO
-                "conta":    row[2] or "",  # C - CONTA
-                "num_conta":row[3] or "",  # D - NUM_CONTA
-                "deposito": row[4] or ""   # E - DEPOSITO
+                "material": row[1] or "",
+                "conta":    row[2] or "",
+                "num_conta":row[3] or "",
+                "deposito": row[4] or ""
             }
     return produtos_map
 
@@ -110,7 +107,7 @@ def send_telegram_message(chat_id, text):
         print(f"Erro ao enviar mensagem: {e}")
 
 # ===============================================================
-# O WEBHOOK (O NOVO "PORTEIRO")
+# O WEBHOOK
 # ===============================================================
 @app.route('/webhook', methods=['POST'])
 def telegram_webhook():
@@ -121,31 +118,31 @@ def telegram_webhook():
         message = update.get('message')
         
         if not message or not message.get('text') or not update_id:
-            return jsonify(status="ok") # Ignora
+            return jsonify(status="ok")
 
-        # --- PREVENÇÃO DE DUPLICIDADE ---
+        # Prevenção de duplicidade
         if update_id in processed_ids:
             print(f"Ignorando ID duplicado: {update_id}")
             return jsonify(status="ok")
         
-        if len(processed_ids) > 1000: # Limpa o cache
+        if len(processed_ids) > 1000:
             processed_ids.clear()
         processed_ids.add(update_id)
-        # ---------------------------------
         
         chat_id = message['chat']['id']
         text = message['text']
         print(f"Recebida nova mensagem: {text}")
 
-        # 1. Busca dados da planilha
+        # 1. Busca dados
         produtos_map = get_lookup_map()
         
         # 2. Chama IA
         lista_de_itens = get_ia_data(text, "\n".join(produtos_map.keys()))
         
-        # 3. Prepara linhas para a planilha
+        # 3. Prepara linhas
         linhas_para_adicionar = []
         respostas_telegram = []
+        # Correção de data (dd/mm/aaaa)
         data_atual = datetime.datetime.now().strftime("%d/%m/%Y")
         
         for item in lista_de_itens:
@@ -163,9 +160,10 @@ def telegram_webhook():
             ])
             respostas_telegram.append(f"📦 {item['descricao']} (Qtd: {item['quantidade']})")
 
-        # 4. Escreve na planilha (em lote)
+        # 4. Escreve na planilha (CORREÇÃO AQUI)
         if linhas_para_adicionar:
-            aba_historico.append_rows(linhas_para_adicionar)
+            # table_range="A:A" ignora os checkboxes da coluna J
+            aba_historico.append_rows(linhas_para_adicionar, table_range="A:A")
             print(f"{len(linhas_para_adicionar)} linhas adicionadas à planilha.")
         
         # 5. Envia resposta
@@ -179,16 +177,13 @@ def telegram_webhook():
             chat_id = update['message']['chat']['id']
             send_telegram_message(chat_id, f"❌ Ocorreu um erro no processamento:\n{e}")
         except:
-            pass 
+            pass
 
-    # Responde OK ao Telegram
     return jsonify(status="ok")
 
-# ===============================================================
-# ROTA DE "HEALTH CHECK" (para o Render)
-# ===============================================================
 @app.route('/')
 def health_check():
     return "Bot está vivo!", 200
 
-# O Gunicorn (do Render) vai rodar isso, não precisamos do app.run()
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080)
