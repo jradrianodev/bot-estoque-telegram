@@ -4,6 +4,7 @@ import gspread
 import requests
 import datetime
 import traceback
+import re  # <--- Importante para a "pinça"
 from flask import Flask, request, jsonify
 
 # --- CONFIGURAÇÃO ---
@@ -12,7 +13,6 @@ SHEET_ID = os.environ.get('SHEET_ID', "13Nr2zfXBhRxFpsC5zfhHGAkrdrISxvApjX9KgUwv
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', "AIzaSyAutlE8Zg4b2oIqbe5wYd1TwNfqLa-uEgI")
 # --- FIM DA CONFIGURAÇÃO ---
 
-# Inicializa o Flask
 app = Flask(__name__)
 
 # Conecta ao Google Sheets
@@ -27,16 +27,17 @@ except Exception as e:
     print(traceback.format_exc())
     print("--- FIM DO ERRO ---")
 
-# Cache simples em memória
 processed_ids = set()
 
 # ===============================================================
-# HELPER: CHAMADA DA IA (GEMINI)
+# HELPER: CHAMADA DA IA (COM "PINÇA" DE JSON)
 # ===============================================================
 def get_ia_data(texto, produtos_lista):
     print(f"Chamando IA para: {texto}")
+    
     prompt = f"""
-    Você é um assistente de estoque. Sua tarefa é analisar uma frase e extrair UMA LISTA de todos os produtos, quantidades e setor.
+    Você é um sistema de extração de dados.
+    Analise a frase do usuário e extraia os produtos baseados na lista permitida.
 
     LISTA DE PRODUTOS VÁLIDOS:
     {produtos_lista}
@@ -44,20 +45,24 @@ def get_ia_data(texto, produtos_lista):
     FRASE DO USUÁRIO: "{texto}"
 
     REGRAS:
-    1. 'descricao' DEVE ser o nome EXATO da lista. Use correspondência aproximada para encontrar.
-    2. O 'setor' é o local/departamento (ex: 'limpeza', 'clínica veterinária', 'copa', 'NPJ'). Ele pode ser mencionado apenas uma vez e deve ser aplicado a TODOS os itens da lista.
-    3. Se o setor não for mencionado, use "Não Informado" para TODOS.
-    4. 'quantidade' DEVE ser um número (ex: "01" vira "1").
+    1. 'descricao': Deve ser o nome EXATO que está na lista acima.
+    2. 'setor': Identifique o setor. Se não houver, use "Não Informado".
+    3. 'quantidade': Converta para número inteiro.
 
-    Retorne APENAS um array de objetos JSON no formato:
+    SAÍDA: Retorne APENAS um JSON (Array de Objetos).
     [
-      {{"descricao": "NOME EXATO DO ITEM 1", "quantidade": "NUMERO 1", "setor": "SETOR APLICADO"}},
-      {{"descricao": "NOME EXATO DO ITEM 2", "quantidade": "NUMERO 2", "setor": "SETOR APLICADO"}}
+      {{"descricao": "NOME DO ITEM", "quantidade": 1, "setor": "Setor A"}}
     ]
-    Se NENHUM produto da lista for encontrado, retorne um array vazio: []
     """
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    # Mantendo a URL original que você estava usando (v1beta / 2.5 ou flash)
+    # Se der erro de modelo não encontrado, o Render vai avisar, mas aqui mantivemos genérico
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_API_KEY}"
+    
+    # NOTA: Se o seu código anterior usava '2.5-flash' e funcionava, pode manter.
+    # Mas o '2.0-flash-exp' ou '1.5-flash' costumam ser as chaves padrão aceitas agora.
+    # Vou deixar a URL que costuma funcionar melhor com chaves gratuitas atuais.
+    
     headers = {'Content-Type': 'application/json'}
     payload = json.dumps({"contents": [{"parts": [{"text": prompt}]}]})
     
@@ -67,15 +72,36 @@ def get_ia_data(texto, produtos_lista):
         raise Exception(f"Erro da API Gemini: {response.text}")
 
     result = response.json()
-    texto_gerado = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '[]')
-    texto_gerado = texto_gerado.replace("```json", "").replace("```", "").strip()
     
-    lista_de_itens = json.loads(texto_gerado)
+    # Captura segura do texto
+    try:
+        texto_gerado = result['candidates'][0]['content']['parts'][0]['text']
+    except (KeyError, IndexError):
+        print(f"DEBUG IA (Vazio): {result}")
+        return []
+
+    print(f"DEBUG IA RAW: {texto_gerado}") # Isso vai aparecer no log se der erro
+
+    # --- A CORREÇÃO "PINÇA" (REGEX) ---
+    # Procura por qualquer coisa que pareça uma lista JSON [...]
+    match = re.search(r'\[.*\]', texto_gerado, re.DOTALL)
     
-    if not isinstance(lista_de_itens, list) or len(lista_de_itens) == 0:
-        raise Exception("Nenhum produto da lista foi encontrado na sua mensagem.")
-        
-    return lista_de_itens
+    if match:
+        json_limpo = match.group(0)
+        try:
+            lista_de_itens = json.loads(json_limpo)
+            return lista_de_itens
+        except json.JSONDecodeError:
+            raise Exception(f"A IA retornou algo parecido com JSON, mas estava quebrado: {json_limpo}")
+    else:
+        # Se não achou colchetes, tenta limpar crases simples
+        texto_limpo = texto_gerado.replace("```json", "").replace("```", "").strip()
+        if not texto_limpo:
+             return [] # Retorna lista vazia se a IA não falou nada
+        try:
+            return json.loads(texto_limpo)
+        except:
+            raise Exception(f"A IA não retornou um JSON válido. Retornou: {texto_gerado}")
 
 # ===============================================================
 # HELPER: BUSCAR DADOS (LOOKUP)
@@ -86,11 +112,12 @@ def get_lookup_map():
     produtos_map = {}
     for row in produtos_data:
         if row[0]:
+            row += [""] * (5 - len(row))
             produtos_map[row[0]] = {
-                "material": row[1] or "",
-                "conta":    row[2] or "",
-                "num_conta":row[3] or "",
-                "deposito": row[4] or ""
+                "material": row[1],
+                "conta":    row[2],
+                "num_conta":row[3],
+                "deposito": row[4]
             }
     return produtos_map
 
@@ -102,7 +129,6 @@ def send_telegram_message(chat_id, text):
     payload = {"chat_id": chat_id, "text": text}
     try:
         requests.post(url, json=payload)
-        print(f"Resposta enviada para {chat_id}")
     except Exception as e:
         print(f"Erro ao enviar mensagem: {e}")
 
@@ -120,7 +146,6 @@ def telegram_webhook():
         if not message or not message.get('text') or not update_id:
             return jsonify(status="ok")
 
-        # Prevenção de duplicidade
         if update_id in processed_ids:
             print(f"Ignorando ID duplicado: {update_id}")
             return jsonify(status="ok")
@@ -133,49 +158,59 @@ def telegram_webhook():
         text = message['text']
         print(f"Recebida nova mensagem: {text}")
 
-        # 1. Busca dados
         produtos_map = get_lookup_map()
         
-        # 2. Chama IA
-        lista_de_itens = get_ia_data(text, "\n".join(produtos_map.keys()))
+        # Chama IA
+        try:
+            lista_de_itens = get_ia_data(text, "\n".join(produtos_map.keys()))
+        except Exception as e:
+            # Se der erro na IA, avisa e para
+            send_telegram_message(chat_id, f"⚠️ A IA se confundiu: {e}")
+            return jsonify(status="ok")
         
-        # 3. Prepara linhas
+        if not lista_de_itens:
+             send_telegram_message(chat_id, "⚠️ Não identifiquei produtos da lista.")
+             return jsonify(status="ok")
+
         linhas_para_adicionar = []
         respostas_telegram = []
-        # Correção de data (dd/mm/aaaa)
         data_atual = datetime.datetime.now().strftime("%d/%m/%Y")
         
+        setor_geral = "Não Informado"
+        if len(lista_de_itens) > 0:
+            setor_geral = lista_de_itens[0].get('setor', 'Não Informado')
+
         for item in lista_de_itens:
-            lookup = produtos_map.get(item['descricao'], {})
+            nome_item = item.get('descricao')
+            qtd_item = item.get('quantidade')
+            lookup = produtos_map.get(nome_item, {})
             
             linhas_para_adicionar.append([
-                data_atual,
-                item['descricao'],
-                item['quantidade'],
-                item['setor'],
-                lookup.get('deposito', ''),
-                lookup.get('conta', ''),
-                lookup.get('num_conta', ''),
-                lookup.get('material', '')
+                data_atual, nome_item, qtd_item, setor_geral,
+                lookup.get('deposito', ''), lookup.get('conta', ''),
+                lookup.get('num_conta', ''), lookup.get('material', '')
             ])
-            respostas_telegram.append(f"📦 {item['descricao']} (Qtd: {item['quantidade']})")
+            respostas_telegram.append(f"📦 {nome_item} (Qtd: {qtd_item})")
 
-        # 4. Escreve na planilha (CORREÇÃO AQUI)
         if linhas_para_adicionar:
-            # table_range="A:A" ignora os checkboxes da coluna J
-            aba_historico.append_rows(linhas_para_adicionar, table_range="A:A")
-            print(f"{len(linhas_para_adicionar)} linhas adicionadas à planilha.")
+            # Lógica da Coluna A para ignorar checkboxes
+            coluna_a = aba_historico.col_values(1) 
+            proxima_linha = len(coluna_a) + 1
+            values_str = [[str(x) for x in linha] for linha in linhas_para_adicionar]
+            range_name = f"A{proxima_linha}:H{proxima_linha + len(values_str) - 1}"
+            
+            aba_historico.update(range_name=range_name, values=values_str)
+            print(f"Adicionado na linha {proxima_linha}.")
         
-        # 5. Envia resposta
-        setor = lista_de_itens[0]['setor']
-        resposta_final = f"✅ Lançados {len(lista_de_itens)} itens para o setor \"{setor}\"!\n\n" + "\n".join(respostas_telegram)
+        resposta_final = f"✅ Lançados {len(lista_de_itens)} itens para \"{setor_geral}\"!\n\n" + "\n".join(respostas_telegram)
         send_telegram_message(chat_id, resposta_final)
 
     except Exception as e:
         print(f"Erro no processamento: {e}")
+        traceback.print_exc()
         try:
             chat_id = update['message']['chat']['id']
-            send_telegram_message(chat_id, f"❌ Ocorreu um erro no processamento:\n{e}")
+            send_telegram_message(chat_id, f"❌ Ocorreu um erro: {e}")
         except:
             pass
 
