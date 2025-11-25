@@ -10,7 +10,7 @@ from flask import Flask, request, jsonify
 # --- CONFIGURAÇÃO ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN', "8429737414:AAEu2MZwc7AaNj7XScU9tRX_HyiIP5f-9Zw")
 SHEET_ID = os.environ.get('SHEET_ID', "13Nr2zfXBhRxFpsC5zfhHGAkrdrISxvApjX9KgUwvAsk")
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', "AQ.Ab8RN6J_LGIdnqb2Ep86UHUQ9EwMrt9slkcffAvftxyFwhuaQg")
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', "AIzaSyCwY2jukJPPnYYUvrAoRgUnXQoc0JLEW7Y")
 # --- FIM DA CONFIGURAÇÃO ---
 
 app = Flask(__name__)
