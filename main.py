@@ -4,13 +4,13 @@ import gspread
 import requests
 import datetime
 import traceback
-import re  # <--- Importante para a "pinça"
+import re
 from flask import Flask, request, jsonify
 
 # --- CONFIGURAÇÃO ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN', "8429737414:AAEu2MZwc7AaNj7XScU9tRX_HyiIP5f-9Zw")
 SHEET_ID = os.environ.get('SHEET_ID', "13Nr2zfXBhRxFpsC5zfhHGAkrdrISxvApjX9KgUwvAsk")
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', "AIzaSyCwY2jukJPPnYYUvrAoRgUnXQoc0JLEW7Y")
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', "AIzaSyAutlE8Zg4b2oIqbe5wYd1TwNfqLa-uEgI")
 # --- FIM DA CONFIGURAÇÃO ---
 
 app = Flask(__name__)
@@ -30,7 +30,7 @@ except Exception as e:
 processed_ids = set()
 
 # ===============================================================
-# HELPER: CHAMADA DA IA (COM "PINÇA" DE JSON)
+# HELPER: CHAMADA DA IA
 # ===============================================================
 def get_ia_data(texto, produtos_lista):
     print(f"Chamando IA para: {texto}")
@@ -55,13 +55,7 @@ def get_ia_data(texto, produtos_lista):
     ]
     """
     
-    # Mantendo a URL original que você estava usando (v1beta / 2.5 ou flash)
-    # Se der erro de modelo não encontrado, o Render vai avisar, mas aqui mantivemos genérico
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_API_KEY}"
-    
-    # NOTA: Se o seu código anterior usava '2.5-flash' e funcionava, pode manter.
-    # Mas o '2.0-flash-exp' ou '1.5-flash' costumam ser as chaves padrão aceitas agora.
-    # Vou deixar a URL que costuma funcionar melhor com chaves gratuitas atuais.
     
     headers = {'Content-Type': 'application/json'}
     payload = json.dumps({"contents": [{"parts": [{"text": prompt}]}]})
@@ -73,17 +67,14 @@ def get_ia_data(texto, produtos_lista):
 
     result = response.json()
     
-    # Captura segura do texto
     try:
         texto_gerado = result['candidates'][0]['content']['parts'][0]['text']
     except (KeyError, IndexError):
         print(f"DEBUG IA (Vazio): {result}")
         return []
 
-    print(f"DEBUG IA RAW: {texto_gerado}") # Isso vai aparecer no log se der erro
+    print(f"DEBUG IA RAW: {texto_gerado}") 
 
-    # --- A CORREÇÃO "PINÇA" (REGEX) ---
-    # Procura por qualquer coisa que pareça uma lista JSON [...]
     match = re.search(r'\[.*\]', texto_gerado, re.DOTALL)
     
     if match:
@@ -94,17 +85,16 @@ def get_ia_data(texto, produtos_lista):
         except json.JSONDecodeError:
             raise Exception(f"A IA retornou algo parecido com JSON, mas estava quebrado: {json_limpo}")
     else:
-        # Se não achou colchetes, tenta limpar crases simples
         texto_limpo = texto_gerado.replace("```json", "").replace("```", "").strip()
         if not texto_limpo:
-             return [] # Retorna lista vazia se a IA não falou nada
+             return []
         try:
             return json.loads(texto_limpo)
         except:
             raise Exception(f"A IA não retornou um JSON válido. Retornou: {texto_gerado}")
 
 # ===============================================================
-# HELPER: BUSCAR DADOS (LOOKUP)
+# HELPER: BUSCAR DADOS
 # ===============================================================
 def get_lookup_map():
     print("Buscando lista de produtos na planilha...")
@@ -122,7 +112,7 @@ def get_lookup_map():
     return produtos_map
 
 # ===============================================================
-# HELPER: ENVIAR MENSAGEM TELEGRAM
+# HELPER: ENVIAR MENSAGEM
 # ===============================================================
 def send_telegram_message(chat_id, text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -160,11 +150,9 @@ def telegram_webhook():
 
         produtos_map = get_lookup_map()
         
-        # Chama IA
         try:
             lista_de_itens = get_ia_data(text, "\n".join(produtos_map.keys()))
         except Exception as e:
-            # Se der erro na IA, avisa e para
             send_telegram_message(chat_id, f"⚠️ A IA se confundiu: {e}")
             return jsonify(status="ok")
         
@@ -192,12 +180,23 @@ def telegram_webhook():
             ])
             respostas_telegram.append(f"📦 {nome_item} (Qtd: {qtd_item})")
 
+        # 4. Escreve na planilha (Lógica com Auto-Expansão de Linhas)
         if linhas_para_adicionar:
-            # Lógica da Coluna A para ignorar checkboxes
             coluna_a = aba_historico.col_values(1) 
             proxima_linha = len(coluna_a) + 1
+            total_linhas_novas = len(linhas_para_adicionar)
+            
+            # Verifica se precisa criar mais linhas na planilha
+            linhas_totais_planilha = aba_historico.row_count
+            linhas_necessarias = proxima_linha + total_linhas_novas - 1
+            
+            if linhas_necessarias > linhas_totais_planilha:
+                linhas_para_criar = linhas_necessarias - linhas_totais_planilha + 10
+                aba_historico.add_rows(linhas_para_criar)
+                print(f"Criadas {linhas_para_criar} novas linhas na planilha.")
+
             values_str = [[str(x) for x in linha] for linha in linhas_para_adicionar]
-            range_name = f"A{proxima_linha}:H{proxima_linha + len(values_str) - 1}"
+            range_name = f"A{proxima_linha}:H{proxima_linha + total_linhas_novas - 1}"
             
             aba_historico.update(range_name=range_name, values=values_str)
             print(f"Adicionado na linha {proxima_linha}.")
