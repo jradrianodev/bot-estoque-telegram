@@ -10,7 +10,7 @@ from flask import Flask, request, jsonify
 # --- CONFIGURAÇÃO ---
 BOT_TOKEN = os.environ.get('BOT_TOKEN', "8429737414:AAEu2MZwc7AaNj7XScU9tRX_HyiIP5f-9Zw")
 SHEET_ID = os.environ.get('SHEET_ID', "13Nr2zfXBhRxFpsC5zfhHGAkrdrISxvApjX9KgUwvAsk")
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', "AIzaSyAutlE8Zg4b2oIqbe5wYd1TwNfqLa-uEgI")
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', "AIzaSyD8DCVSB2lVnvBAd7kKXOf74aa7ScdOm1c")
 # --- FIM DA CONFIGURAÇÃO ---
 
 app = Flask(__name__)
@@ -55,7 +55,7 @@ def get_ia_data(texto, produtos_lista):
     ]
     """
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     headers = {'Content-Type': 'application/json'}
     payload = json.dumps({"contents": [{"parts": [{"text": prompt}]}]})
