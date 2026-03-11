@@ -153,6 +153,7 @@ def telegram_webhook():
         try:
             lista_de_itens = get_ia_data(text, "\n".join(produtos_map.keys()))
         except Exception as e:
+            print(f"🚨 ERRO NA IA: {e}") # <--- ESTA LINHA VAI NOS SALVAR
             send_telegram_message(chat_id, f"⚠️ A IA se confundiu: {e}")
             return jsonify(status="ok")
         
